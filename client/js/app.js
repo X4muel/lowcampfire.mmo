@@ -44,7 +44,7 @@ let playerMapX = 0;
 let playerMapY = 0;
 
 // --- 3. Inicialização do Socket.io ---
-const socket = io("http://localhost:3000");
+const socket = io("https://lowcampfire-mmo.onrender.com");
 
 // --- 4. Funções de UI ---
 function appendMessage(msg) {
