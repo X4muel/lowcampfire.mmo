@@ -1,0 +1,22 @@
+# Pastas de dependências
+node_modules/
+
+# Arquivos de variáveis de ambiente
+.env
+
+# Arquivos de log gerados pelo sistema
+*.log
+
+# Arquivos temporários e de cache
+.DS_Store # macOS
+Thumbs.db # Windows
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.sqlite
+*.sqlite3
+/tmp/
+
+# Ignorar a pasta "build" ou "dist" se você tiver uma
+# build/
+# dist/

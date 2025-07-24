@@ -1,0 +1,34 @@
+{
+    "Espada de Madeira": {
+        "weapon_type_category": "melee",
+        "base_damage": 10,
+        "attack_speed": 1.0,
+        "range": 1.5,
+        "animation_key": "swing_sword"
+    },
+    "Arco Curto": {
+        "weapon_type_category": "bow",
+        "base_damage": 5,
+        "charge_time_max": 1.0,
+        "min_arrow_speed": 5,
+        "max_arrow_speed": 20,
+        "ammo_type": "Flecha Simples",
+        "animation_key": "draw_bow"
+    },
+    "Pistola Simples": {
+        "weapon_type_category": "ranged",
+        "base_damage": 15,
+        "fire_delay": 0.3,
+        "reload_time": 2.0,
+        "accuracy": 0.9,
+        "ammo_type": "Bala Simples",
+        "animation_key": "shoot_handgun"
+    },
+    "Pedra": {
+        "weapon_type_category": "throwable",
+        "base_damage": 5,
+        "max_stack": 10,
+        "throw_speed": 10,
+        "animation_key": "throw_item"
+    }
+}

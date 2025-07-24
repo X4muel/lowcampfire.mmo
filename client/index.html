@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Low Campfire - Cliente</title>
+    <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+    <h1>Low Campfire - Cliente</h1>
+
+    <div id="auth-container" class="container">
+        <h2 id="auth-title">Registrar</h2>
+        <input type="text" id="usernameInput" placeholder="Nome de Usuário (único)">
+        <input type="email" id="emailInput" placeholder="Email">
+        <input type="password" id="passwordInput" placeholder="Senha">
+        <button id="authButton">Registrar</button>
+        <p id="auth-error" style="color: red;"></p>
+        <p><a href="#" id="switch-auth">Já tem conta? Fazer Login</a></p>
+    </div>
+
+    <div id="game-container" class="container">
+        <div id="equipped-item-display">
+            <img id="equipped-item-image" src="" alt="Item Equipado" style="display:none;">
+            <span id="equipped-item-name"></span>
+        </div>
+
+        <div id="game-map">
+            </div>
+
+        <div id="player-cube"></div>
+
+        <h2>Chat</h2>
+        <div id="messages"></div>
+        <div id="chat-input-container">
+            <input type="text" id="messageInput" placeholder="Digite sua mensagem ou comando (/additem nome)">
+            <button id="sendButton">Enviar</button>
+        </div>
+
+        <h3>Hotbar (WIP)</h3>
+        <div id="hotbar">
+            <div class="inventory-slot" data-slot-index="0"></div>
+            <div class="inventory-slot" data-slot-index="1"></div>
+            <div class="inventory-slot" data-slot-index="2"></div>
+            <div class="inventory-slot" data-slot-index="3"></div>
+            <div class="inventory-slot" data-slot-index="4"></div>
+        </div>
+
+        <h3>Inventário (Aperte ESC para Abrir/Fechar - WIP)</h3>
+        <div id="inventory-menu">
+            <h4>Seu Inventário</h4>
+            <div id="inventory-grid">
+                <div class="inventory-slot" data-slot-index="0"></div>
+                <div class="inventory-slot" data-slot-index="1"></div>
+                <div class="inventory-slot" data-slot-index="2"></div>
+                <div class="inventory-slot" data-slot-index="3"></div>
+                <div class="inventory-slot" data-slot-index="4"></div>
+                <div class="inventory-slot" data-slot-index="5"></div>
+                <div class="inventory-slot" data-slot-index="6"></div>
+                <div class="inventory-slot" data-slot-index="7"></div>
+                <div class="inventory-slot" data-slot-index="8"></div>
+                <div class="inventory-slot" data-slot-index="9"></div>
+                <div class="inventory-slot" data-slot-index="10"></div>
+                <div class="inventory-slot" data-slot-index="11"></div>
+                <div class="inventory-slot" data-slot-index="12"></div>
+                <div class="inventory-slot" data-slot-index="13"></div>
+                <div class="inventory-slot" data-slot-index="14"></div>
+            </div>
+            <button id="closeInventoryButton">Fechar</button>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="module" src="./js/utils.js"></script>
+    <script type="module" src="./js/app.js"></script>
+</body>
+</html>
