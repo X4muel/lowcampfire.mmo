@@ -66,6 +66,21 @@ Promise.all([loadGlobalItemDefinitions(), loadWeaponStats()]).then(() => {
     console.error('Falha ao carregar dados de jogo iniciais:', err);
 });
 
+// --- NOVO: MIDDLEWARE PARA DEFINIR CONTENT SECURITY POLICY (CSP) ---
+app.use((req, res, next) => {
+    res.setHeader(
+        'Content-Security-Policy',
+        `default-src 'self' blob:; ` + // 'self' para a origem do seu site, 'blob:' para URLs blob
+        `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.socket.io https://lowcampfire-mmo.onrender.com; ` + // 'unsafe-inline' e 'unsafe-eval' são necessários para alguns scripts gerados em tempo de execução (evite em produção se possível)
+        `connect-src 'self' ws: wss: https://lowcampfire-mmo.onrender.com; ` + // Para WebSockets (Socket.IO)
+        `img-src 'self' data: https://lowcampfire-mmo.onrender.com https://i.imgur.com; ` + // Permite imagens de 'self', data URIs e Imgur
+        `style-src 'self' 'unsafe-inline' https://lowcampfire-mmo.onrender.com; ` + // 'unsafe-inline' para estilos inline
+        `font-src 'self' https://lowcampfire-mmo.onrender.com;` // Para fontes, se houver
+    );
+    next();
+});
+// --- FIM DO BLOCO CSP ---
+
 // Servir arquivos estáticos (HTML, CSS, JS do cliente)
 app.use(express.static(path.join(__dirname, 'client')));
 
