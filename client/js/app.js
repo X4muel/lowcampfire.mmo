@@ -1,652 +1,542 @@
-import { getRandomColor } from './utils.js';
-
-// --- 1. Referências aos Elementos DOM ---
-const authContainer = document.getElementById('auth-container');
-const gameContainer = document.getElementById('game-container');
-const authTitle = document.getElementById('auth-title');
-const usernameInput = document.getElementById('usernameInput');
-const emailInput = document.getElementById('emailInput');
-const passwordInput = document.getElementById('passwordInput');
-const authButton = document.getElementById('authButton');
-const authError = document.getElementById('auth-error');
-const switchAuthLink = document.getElementById('switch-auth');
-
-const messagesDiv = document.getElementById('messages');
-const messageInput = document.getElementById('messageInput');
-const sendButton = document.getElementById('sendButton');
-
-const playerCube = document.getElementById('player-cube');
-const playerHealthBar = document.getElementById('player-health-bar'); // NOVO: Barra de vida do jogador
-const inventoryMenu = document.getElementById('inventory-menu');
-const closeInventoryButton = document.getElementById('closeInventoryButton');
-const inventoryGrid = document.getElementById('inventory-grid');
-const hotbar = document.getElementById('hotbar');
-
-const gameMap = document.getElementById('game-map');
-const equippedItemDisplay = document.getElementById('equipped-item-display');
-const equippedItemImage = document.getElementById('equipped-item-image');
-const equippedItemName = document.getElementById('equipped-item-name');
-const equippedWeaponSprite = document.getElementById('equipped-weapon-sprite'); // NOVO: Sprite da arma
-
-// --- 2. Variáveis de Estado Global (Cliente) ---
-let currentAuthModeIsLogin = false;
-let localPlayer = { // Informações do jogador logado localmente
-    id: null,
-    username: null,
-    x_pos: 0,
-    y_pos: 0,
-    life: 10,
-    life_max: 10,
-    inventory: [],
-    equippedItem: null
-};
-let clientItemDefinitions = {};
-let clientWeaponStats = {};
-let otherPlayers = {}; // { playerId: { username, x_pos, y_pos, life, life_max, elementDOM }, ... }
-
-// --- Variáveis do Mapa ---
+// CORREÇÃO: Definir MAP_WIDTH e MAP_HEIGHT, ou carregar do servidor se for dinâmico.
 const MAP_WIDTH = 10;
 const MAP_HEIGHT = 10;
-const TILE_SIZE = 32;
+const TILE_SIZE = 64; // Tamanho de cada célula do grid em pixels
 
-// --- Estado do Mouse para rotação da arma ---
-let mouseX = 0;
-let mouseY = 0;
+let socket;
+let currentPlayerData = null;
+let otherPlayers = {}; // Para armazenar outros jogadores conectados
+let globalItemDefinitions = {}; // Recebido do servidor
+let globalWeaponStats = {}; // Recebido do servidor
 
-// --- 3. Inicialização do Socket.io ---
-const socket = io("https://lowcampfire-mmo.onrender.com");
+const gameCanvas = document.getElementById('gameCanvas');
+const ctx = gameCanvas.getContext('2d');
+const chatBox = document.getElementById('chatBox');
+const chatInput = document.getElementById('chatInput');
+const sendChatButton = document.getElementById('sendChat');
+const registerForm = document.getElementById('registerForm');
+const loginForm = document.getElementById('loginForm');
+const registerButton = document.getElementById('registerButton');
+const loginButton = document.getElementById('loginButton');
+const toggleToLoginButton = document.getElementById('toggleToLogin'); // NOVO
+const toggleToRegisterButton = document.getElementById('toggleToRegister'); // NOVO
+const authContainer = document.getElementById('authContainer');
+const gameContainer = document.getElementById('gameContainer');
+const inventoryContainer = document.getElementById('inventoryContainer');
+const hotbarContainer = document.getElementById('hotbar');
+const inventoryButton = document.getElementById('inventoryButton'); // Botão de inventário (se tiver)
+const usernameDisplay = document.getElementById('usernameDisplay'); // Para mostrar o nome de usuário logado
+const healthBar = document.getElementById('healthBar'); // Barra de vida
+const attackButton = document.getElementById('attackButton'); // Botão de ataque
 
-// --- 4. Funções de UI ---
-function appendMessage(msg, type = 'chat') { // Adicionado 'type' para diferenciar mensagens
-    const p = document.createElement('p');
-    p.textContent = msg;
-    if (type === 'server') {
-        p.classList.add('server-message');
-    } else if (type === 'chat') {
-        p.classList.add('chat-message');
-    }
-    messagesDiv.appendChild(p);
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
-}
+let inventoryVisible = false;
+const INVENTORY_SIZE = 20; // Tamanho fixo do inventário
+const HOTBAR_SIZE = 5; // Tamanho da hotbar
 
-function showGameUI() {
-    console.log("Showing Game UI.");
-    authContainer.style.display = 'none';
-    gameContainer.style.display = 'flex';
-}
+// Mapas para armazenar imagens
+const playerImage = new Image();
+playerImage.src = 'assets/player.png'; // Caminho para a imagem do jogador
+const otherPlayerImage = new Image(); // Imagem para outros jogadores
+otherPlayerImage.src = 'assets/other_player.png'; // Assumindo uma imagem diferente
+const weaponImage = new Image(); // Imagem genérica para armas
+weaponImage.src = 'assets/weapons/espada_de_madeira.png'; // Exemplo, ajuste conforme necessário
 
-function showAuthUI() {
-    console.log("Showing Auth UI.");
+
+// --- 1. Funções de UI/HTML ---
+function showAuthScreen() {
     authContainer.style.display = 'block';
     gameContainer.style.display = 'none';
-    updateAuthFormUI();
+    inventoryContainer.style.display = 'none'; // Esconde inventário
+    // Sempre começa no registro por padrão
+    document.getElementById('registerSection').style.display = 'block';
+    document.getElementById('loginSection').style.display = 'none';
 }
 
-function toggleInventoryMenu() {
-    console.log("Toggling Inventory Menu.");
-    if (inventoryMenu.style.display === 'none' || inventoryMenu.style.display === '') {
-        inventoryMenu.style.display = 'block';
-        updateInventoryDisplay();
-    } else {
-        inventoryMenu.style.display = 'none';
-    }
+function showGameScreen() {
+    authContainer.style.display = 'none';
+    gameContainer.style.display = 'block';
+    // inventoryContainer.style.display = 'block'; // Mostra o inventário se quiser que ele esteja visível por padrão
+    drawGame(); // Desenha o mapa e o jogador uma vez
 }
 
-function setAuthMode(isLogin) {
-    console.log("Setting Auth Mode to:", isLogin ? "Login" : "Register");
-    currentAuthModeIsLogin = isLogin;
-    updateAuthFormUI();
+function appendMessage(sender, text, type = 'chat') {
+    const p = document.createElement('p');
+    p.innerHTML = `<strong>${sender}:</strong> ${text}`;
+    if (type === 'server') {
+        p.style.color = 'yellow';
+    }
+    chatBox.appendChild(p);
+    chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-function updateAuthFormUI() {
-    authTitle.textContent = currentAuthModeIsLogin ? 'Login' : 'Registrar';
-    authButton.textContent = currentAuthModeIsLogin ? 'Entrar' : 'Registrar';
-    usernameInput.style.display = currentAuthModeIsLogin ? 'none' : 'block';
-    switchAuthLink.textContent = currentAuthModeIsLogin ? 'Não tem conta? Fazer Registro' : 'Já tem conta? Fazer Login';
-    authError.textContent = '';
-    emailInput.value = '';
-    passwordInput.value = '';
-    usernameInput.value = '';
-}
-
-function updateInventoryDisplay() {
-    // Limpa hotbar e inventário
-    [...hotbar.children, ...inventoryGrid.children].forEach(slot => {
-        slot.innerHTML = '';
-        slot.classList.remove('has-item', 'selected-slot');
-        slot.onclick = null; // Limpa event listener
-    });
-
-    // Preenche hotbar
-    for (let i = 0; i < 5; i++) {
-        const slotDiv = hotbar.children[i];
-        const itemInSlot = localPlayer.inventory[i];
-        if (itemInSlot && clientItemDefinitions[itemInSlot.item_id]) {
-            const itemDef = clientItemDefinitions[itemInSlot.item_id];
-            slotDiv.classList.add('has-item');
-            slotDiv.innerHTML = `<img src="${itemDef.icon_url}" alt="${itemDef.name}">`;
-            if (itemDef.max_stack > 1 || itemInSlot.quantity > 1) {
-                slotDiv.innerHTML += `<span class="item-quantity">${itemInSlot.quantity}</span>`;
-            }
-            slotDiv.onclick = () => equipItem(i); // Adiciona evento de clique para equipar
-            if (localPlayer.equippedItem === itemInSlot.item_id) {
-                slotDiv.classList.add('selected-slot');
-            }
-        }
-    }
-
-    // Preenche o grid do inventário
-    for (let i = 0; i < localPlayer.inventory.length; i++) {
-        const slotDiv = inventoryGrid.children[i];
-        if (slotDiv) {
-            const itemInSlot = localPlayer.inventory[i];
-            if (itemInSlot && clientItemDefinitions[itemInSlot.item_id]) {
-                const itemDef = clientItemDefinitions[itemInSlot.item_id];
-                slotDiv.classList.add('has-item');
-                slotDiv.innerHTML = `<img src="${itemDef.icon_url}" alt="${itemDef.name}">`;
-                if (itemDef.max_stack > 1 || itemInSlot.quantity > 1) {
-                    slotDiv.innerHTML += `<span class="item-quantity">${itemInSlot.quantity}</span>`;
-                }
-                slotDiv.onclick = () => equipItem(i); // Adiciona evento de clique para equipar
-                if (localPlayer.equippedItem === itemInSlot.item_id) {
-                    slotDiv.classList.add('selected-slot');
-                }
-            }
-        }
-    }
-}
-
-function updateEquippedItemDisplay() {
-    if (localPlayer.equippedItem && clientItemDefinitions[localPlayer.equippedItem]) {
-        const itemDef = clientItemDefinitions[localPlayer.equippedItem];
-        equippedItemImage.src = itemDef.icon_url;
-        equippedItemImage.style.display = 'block';
-        equippedItemName.textContent = itemDef.name;
-        // Atualiza o sprite da arma em jogo
-        equippedWeaponSprite.src = itemDef.icon_url; // Assumindo que o icon_url serve como sprite
-        equippedWeaponSprite.style.display = 'block';
-        // Posicionar a arma no jogador
-        const playerRect = playerCube.getBoundingClientRect();
-        equippedWeaponSprite.style.left = `${playerRect.left + playerRect.width / 2}px`;
-        equippedWeaponSprite.style.top = `${playerRect.top + playerRect.height / 2}px`;
-
-        updateWeaponRotation(); // Rotaciona a arma com base no mouse
-    } else {
-        equippedItemImage.src = '';
-        equippedItemImage.style.display = 'none';
-        equippedItemName.textContent = '';
-        equippedWeaponSprite.src = '';
-        equippedWeaponSprite.style.display = 'none';
-    }
-}
-
-// NOVO: Função para rotacionar a arma
-function updateWeaponRotation() {
-    if (equippedWeaponSprite.style.display === 'block' && localPlayer.id) {
-        const playerRect = playerCube.getBoundingClientRect();
-        const playerCenterX = playerRect.left + playerRect.width / 2;
-        const playerCenterY = playerRect.top + playerRect.height / 2;
-
-        const angleRad = Math.atan2(mouseY - playerCenterY, mouseX - playerCenterX);
-        const angleDeg = angleRad * (180 / Math.PI);
-
-        // Ajusta a posição para a arma ficar ao redor do player
-        const radius = TILE_SIZE / 2; // Distância do centro do player
-        equippedWeaponSprite.style.left = `${playerCenterX + radius * Math.cos(angleRad) - equippedWeaponSprite.offsetWidth / 2}px`;
-        equippedWeaponSprite.style.top = `${playerCenterY + radius * Math.sin(angleRad) - equippedWeaponSprite.offsetHeight / 2}px`;
-
-        equippedWeaponSprite.style.transform = `rotate(${angleDeg}deg)`;
-    }
-}
-
-
-function createMap() {
-    gameMap.style.gridTemplateColumns = `repeat(${MAP_WIDTH}, ${TILE_SIZE}px)`;
-    gameMap.style.width = `${MAP_WIDTH * TILE_SIZE}px`;
-    gameMap.style.height = `${MAP_HEIGHT * TILE_SIZE}px`;
-
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-        for (let x = 0; x < MAP_WIDTH; x++) {
-            const cell = document.createElement('div');
-            cell.classList.add('map-cell');
-            cell.style.backgroundImage = `url('/assets/tiles/grass.png')`;
-            gameMap.appendChild(cell);
-        }
-    }
-    updatePlayerPositionOnMap();
-}
-
-function updatePlayerPositionOnMap() {
-    playerCube.style.left = `${localPlayer.x_pos * TILE_SIZE + (TILE_SIZE - playerCube.offsetWidth) / 2}px`;
-    playerCube.style.top = `${localPlayer.y_pos * TILE_SIZE + (TILE_SIZE - playerCube.offsetHeight) / 2}px`;
-    updateEquippedItemDisplay(); // Atualiza a posição da arma com o player
-}
-
-function updatePlayerHealthDisplay() {
-    const healthPercentage = (localPlayer.life / localPlayer.life_max) * 100;
-    playerHealthBar.style.width = `${healthPercentage}%`;
-    playerHealthBar.textContent = `${localPlayer.life}/${localPlayer.life_max}`;
-    playerHealthBar.style.backgroundColor = healthPercentage > 50 ? 'green' : (healthPercentage > 20 ? 'orange' : 'red');
-}
-
-// NOVO: Funções para outros jogadores
-function addOtherPlayerToMap(playerData) {
-    if (otherPlayers[playerData.playerId]) {
-        console.warn(`Jogador ${playerData.username} já existe no mapa.`);
-        return;
-    }
-    const otherPlayerDiv = document.createElement('div');
-    otherPlayerDiv.classList.add('other-player-cube');
-    otherPlayerDiv.style.backgroundColor = getRandomColor(); // Cor aleatória para diferenciar
-    otherPlayerDiv.style.left = `${playerData.x_pos * TILE_SIZE + (TILE_SIZE - otherPlayerDiv.offsetWidth) / 2}px`;
-    otherPlayerDiv.style.top = `${playerData.y_pos * TILE_SIZE + (TILE_SIZE - otherPlayerDiv.offsetHeight) / 2}px`;
-    otherPlayerDiv.textContent = playerData.username; // Adiciona o nome
-    gameMap.appendChild(otherPlayerDiv);
-
-    otherPlayers[playerData.playerId] = {
-        ...playerData,
-        element: otherPlayerDiv
-    };
-    console.log(`Adicionado outro jogador: ${playerData.username}`);
-}
-
-function removeOtherPlayerFromMap(playerId) {
-    if (otherPlayers[playerId]) {
-        gameMap.removeChild(otherPlayers[playerId].element);
-        delete otherPlayers[playerId];
-        console.log(`Removido jogador: ${playerId}`);
-    }
-}
-
-function updateOtherPlayerPositionOnMap(playerId, x, y) {
-    if (otherPlayers[playerId]) {
-        otherPlayers[playerId].x_pos = x;
-        otherPlayers[playerId].y_pos = y;
-        otherPlayers[playerId].element.style.left = `${x * TILE_SIZE + (TILE_SIZE - otherPlayers[playerId].element.offsetWidth) / 2}px`;
-        otherPlayers[playerId].element.style.top = `${y * TILE_SIZE + (TILE_SIZE - otherPlayers[playerId].element.offsetHeight) / 2}px`;
-    }
-}
-
-function updateOtherPlayerHealthDisplay(playerId, life, life_max) {
-    if (otherPlayers[playerId]) {
-        otherPlayers[playerId].life = life;
-        otherPlayers[playerId].life_max = life_max;
-        // Você pode adicionar uma barra de vida para outros jogadores aqui se quiser.
-        // Por enquanto, apenas atualiza os dados internos.
-        console.log(`Vida de ${otherPlayers[playerId].username} atualizada: ${life}/${life_max}`);
-    }
-}
-
-
-// --- 5. Funções de Carregamento de Dados (Local) ---
-async function loadWeaponStats() {
-    console.log("Loading weapon stats...");
-    try {
-        // Agora, o weapon_stats é enviado pelo servidor no evento globalWeaponStats
-        // Então não precisamos mais carregar localmente.
-        // Manteremos a função vazia por enquanto para evitar erros.
-    } catch (error) {
-        console.error('Erro ao carregar weapon_stats.json (localmente):', error);
-    }
-}
-
-// --- 6. Comunicação com o Servidor (Socket.io e Fetch) ---
-// Socket.io Event Listeners
-socket.on('connect', () => {
-    appendMessage('Conectado ao servidor Socket.io.', 'server');
-    console.log('Conectado ao servidor Socket.io!');
-});
-
-socket.on('globalItemDefinitions', (definitions) => {
-    clientItemDefinitions = definitions;
-    console.log('Definições de itens recebidas do servidor:', clientItemDefinitions);
-    // appendMessage('Definições de itens carregadas!', 'server'); // Removido: excesso de mensagens
-});
-
-socket.on('globalWeaponStats', (stats) => { // NOVO: Recebe weapon_stats do servidor
-    clientWeaponStats = stats;
-    console.log('Estatísticas de armas recebidas do servidor:', clientWeaponStats);
-    appendMessage('Estatísticas de armas carregadas!', 'server');
-});
-
-socket.on('serverMessage', (data) => { // NOVO: Evento específico para mensagens do servidor
-    appendMessage('Servidor: ' + data, 'server');
-});
-
-socket.on('chatMessage', (data) => { // NOVO: Evento para mensagens de chat de outros jogadores
-    appendMessage(`[${data.sender}]: ${data.text}`, 'chat');
-});
-
-socket.on('playerStateUpdate', (playerData) => { // NOVO: Recebe o estado completo do jogador logado
-    localPlayer.id = playerData.playerId;
-    localPlayer.username = playerData.username;
-    localPlayer.x_pos = playerData.x_pos;
-    localPlayer.y_pos = playerData.y_pos;
-    localPlayer.life = playerData.life;
-    localPlayer.life_max = playerData.life_max;
-    localPlayer.inventory = playerData.inventory;
-    localPlayer.equippedItem = playerData.equippedItem; // Pode vir nulo
-
-    updatePlayerPositionOnMap();
-    updatePlayerHealthDisplay();
-    updateInventoryDisplay();
-    updateEquippedItemDisplay();
-    appendMessage(`Bem-vindo, ${localPlayer.username}!`, 'server');
-});
-
-socket.on('currentPlayers', (playersData) => { // NOVO: Recebe lista de jogadores já conectados
-    console.log('Recebida lista de jogadores atuais:', playersData);
-    playersData.forEach(player => {
-        if (player.playerId !== localPlayer.id) { // Não adiciona o próprio jogador
-            addOtherPlayerToMap(player);
-        }
-    });
-});
-
-socket.on('playerConnected', (playerData) => { // NOVO: Evento quando um novo jogador entra
-    if (playerData.playerId !== localPlayer.id) {
-        appendMessage(`${playerData.username} entrou no jogo.`, 'server');
-        addOtherPlayerToMap(playerData);
-    }
-});
-
-socket.on('playerDisconnected', (playerId) => { // NOVO: Evento quando um jogador sai
-    if (otherPlayers[playerId]) {
-        appendMessage(`${otherPlayers[playerId].username} saiu do jogo.`, 'server');
-        removeOtherPlayerFromMap(playerId);
-    }
-});
-
-socket.on('playerMoved', (data) => { // NOVO: Recebe movimento de outros jogadores
-    if (data.playerId !== localPlayer.id) {
-        updateOtherPlayerPositionOnMap(data.playerId, data.x, data.y);
-    }
-});
-
-socket.on('playerInventoryUpdate', (inventoryData) => {
-    console.log('Inventário do jogador atualizado recebido:', inventoryData);
-    localPlayer.inventory = inventoryData;
-    updateInventoryDisplay();
-    // Se o item equipado anterior não estiver mais no inventário, desequipa.
-    if (localPlayer.equippedItem && !localPlayer.inventory.some(item => item.item_id === localPlayer.equippedItem)) {
-        localPlayer.equippedItem = null;
-    }
-    // Equipa o primeiro item como padrão se nada estiver equipado e inventário não vazio
-    if (localPlayer.inventory.length > 0 && !localPlayer.equippedItem) {
-        localPlayer.equippedItem = localPlayer.inventory[0].item_id;
-    }
-    updateEquippedItemDisplay(); // Atualiza a UI do item equipado
-});
-
-socket.on('equippedItemUpdate', (itemId) => { // NOVO: Seu próprio item equipado mudou
-    localPlayer.equippedItem = itemId;
-    updateEquippedItemDisplay();
-    updateInventoryDisplay(); // Atualiza a hotbar/inventário para mostrar o slot selecionado
-});
-
-socket.on('playerEquippedItem', (data) => { // NOVO: Outro jogador equipou item
-    if (otherPlayers[data.playerId] && clientItemDefinitions[data.equippedItemId]) {
-        otherPlayers[data.playerId].equippedItem = data.equippedItemId;
-        // TODO: Renderizar arma em outros jogadores (futuro)
-    }
-});
-
-socket.on('playerHealthUpdate', (data) => { // NOVO: Atualização de vida (seu ou de outro)
-    if (data.playerId === localPlayer.id) {
-        localPlayer.life = data.life;
-        localPlayer.life_max = data.life_max;
-        updatePlayerHealthDisplay();
-        appendMessage(`Sua vida: ${localPlayer.life}/${localPlayer.life_max}`, 'server');
-    } else {
-        updateOtherPlayerHealthDisplay(data.playerId, data.life, data.life_max);
-    }
-});
-
-socket.on('playerDied', (data) => { // NOVO: Mensagem de morte
-    const killer = otherPlayers[data.killerId] ? otherPlayers[data.killerId].username : 'Um jogador';
-    if (data.playerId === localPlayer.id) {
-        appendMessage(`Você morreu para ${killer}!`, 'server');
-    } else if (otherPlayers[data.playerId]) {
-        appendMessage(`${otherPlayers[data.playerId].username} morreu para ${killer}!`, 'server');
-    }
-    // Lógica para esconder o jogador morto se ele não for o localPlayer,
-    // ou mostrar tela de morte para o localPlayer.
-});
-
-socket.on('playerRespawn', (data) => { // NOVO: Respawn (para o próprio jogador)
-    if (localPlayer.id) {
-        localPlayer.x_pos = data.x;
-        localPlayer.y_pos = data.y;
-        updatePlayerPositionOnMap();
-        appendMessage('Você renasceu!', 'server');
-    }
-});
-
-
-socket.on('disconnect', () => {
-    appendMessage('Você foi desconectado do servidor.', 'server');
-    console.log('Desconectado do servidor Socket.io.');
-    showAuthUI();
-    // Resetar estado local do jogador
-    localPlayer = { id: null, username: null, x_pos: 0, y_pos: 0, life: 10, life_max: 10, inventory: [], equippedItem: null };
-    otherPlayers = {}; // Limpa outros jogadores
-    // Limpa divs de outros jogadores
-    document.querySelectorAll('.other-player-cube').forEach(el => el.remove());
-    updateEquippedItemDisplay();
-    updateInventoryDisplay();
-    updatePlayerHealthDisplay(); // Reseta a barra de vida visualmente
-});
-
-socket.on('connect_error', (err) => {
-    console.error('Erro de conexão do Socket.io:', err.message);
-    appendMessage('Erro de conexão ao servidor.', 'server');
-});
-
-// Lógica de Autenticação (Fetch HTTP)
-authButton.addEventListener('click', async () => {
-    const email = emailInput.value;
-    const password = passwordInput.value;
-    const username = usernameInput.value;
-    authError.textContent = '';
-
-    const currentMode = currentAuthModeIsLogin;
-
-    let url = '';
-    let body = {};
-
-    if (currentMode) { // Modo Login
-        url = '/auth/login';
-        body = { email, password };
-    } else { // Modo Registrar
-        if (!username.trim()) {
-            authError.textContent = 'Nome de usuário é obrigatório para registro.';
-            return;
-        }
-        url = '/auth/signup';
-        body = { email, password, username };
-    }
-
-    console.log(`Attempting ${currentMode ? 'login' : 'signup'} to ${url} with body:`, body);
+// --- 2. Autenticação (Login/Registro) ---
+registerForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('registerUsername').value;
+    const email = document.getElementById('registerEmail').value;
+    const password = document.getElementById('registerPassword').value;
 
     try {
-        const response = await fetch(url, {
+        const response = await fetch('/auth/signup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            body: JSON.stringify({ email, password, username })
         });
-
         const data = await response.json();
-        console.log("Auth response data:", data);
-
         if (response.ok) {
-            appendMessage(data.message, 'server');
-            if (currentMode) { // Se o login foi bem-sucedido
-                // O estado completo do jogador será recebido via 'playerStateUpdate' do Socket.io
-                showGameUI(); // Mostra a interface do jogo
-                socket.emit('playerLoggedIn', data.user.id); // Envia ID para o servidor para que ele possa enviar o playerStateUpdate
-            } else { // Se o registro foi bem-sucedido
-                appendMessage('Registro concluído. Agora, faça login com sua nova conta.', 'server');
-                setAuthMode(true);
-            }
+            appendMessage('Servidor', data.message, 'server');
+            // Após registro bem-sucedido, muda para a tela de login
+            document.getElementById('registerSection').style.display = 'none';
+            document.getElementById('loginSection').style.display = 'block';
         } else {
-            authError.textContent = data.error || 'Erro desconhecido durante autenticação.';
+            appendMessage('Servidor', `Erro de registro: ${data.error}`, 'server');
         }
     } catch (error) {
-        console.error('Erro de rede ou servidor durante autenticação:', error);
-        authError.textContent = 'Erro de conexão com o servidor.';
+        appendMessage('Servidor', 'Erro de conexão com o servidor.', 'server');
+        console.error('Erro de registro:', error);
     }
 });
 
-// Lógica de Chat e Comandos (Socket.io)
-sendButton.addEventListener('click', () => {
-    const message = messageInput.value;
-    if (message.trim() !== '') {
-        if (!localPlayer.id) {
-            appendMessage('Você precisa estar logado para usar o chat ou comandos.', 'server');
-            messageInput.value = '';
-            return;
-        }
+loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('loginEmail').value;
+    const password = document.getElementById('loginPassword').value;
 
+    try {
+        const response = await fetch('/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            appendMessage('Servidor', data.message, 'server');
+            currentPlayerData = {
+                playerId: data.user.id,
+                username: data.player.username,
+                x_pos: data.player.x_pos,
+                y_pos: data.player.y_pos,
+                life: data.player.life,
+                life_max: data.player.life_max,
+                inventory: [], // Será carregado via socket
+                equippedItem: data.player.equipped_item_id // Carrega item equipado do perfil
+            };
+            usernameDisplay.textContent = `Bem-vindo, ${currentPlayerData.username}!`;
+            updateHealthBar();
+            showGameScreen();
+            socket.emit('playerLoggedIn', currentPlayerData.playerId); // Informa ao servidor que o jogador logou
+        } else {
+            appendMessage('Servidor', `Erro de login: ${data.error}`, 'server');
+        }
+    } catch (error) {
+        appendMessage('Servidor', 'Erro de conexão com o servidor.', 'server');
+        console.error('Erro de login:', error);
+    }
+});
+
+// CORREÇÃO: Adiciona event listeners para alternar entre login e registro
+toggleToLoginButton.addEventListener('click', () => {
+    document.getElementById('registerSection').style.display = 'none';
+    document.getElementById('loginSection').style.display = 'block';
+});
+
+toggleToRegisterButton.addEventListener('click', () => {
+    document.getElementById('registerSection').style.display = 'block';
+    document.getElementById('loginSection').style.display = 'none';
+});
+
+// --- 3. Inicialização do Socket.io ---
+function initializeSocket() {
+    // CORREÇÃO: Usar a URL do Render para o deploy
+    // Em desenvolvimento local, use "http://localhost:3000"
+    socket = io("https://lowcampfire-mmo.onrender.com");
+
+    socket.on('connect', () => {
+        appendMessage('Servidor', 'Conectado ao servidor Socket.io.', 'server');
+        if (currentPlayerData) { // Se já logado, informa o servidor
+            socket.emit('playerLoggedIn', currentPlayerData.playerId);
+        }
+    });
+
+    socket.on('disconnect', () => {
+        appendMessage('Servidor', 'Desconectado do servidor.', 'server');
+    });
+
+    socket.on('serverMessage', (message) => {
+        appendMessage('Servidor', message, 'server');
+    });
+
+    socket.on('chatMessage', (data) => {
+        appendMessage(data.sender, data.text);
+    });
+
+    socket.on('globalItemDefinitions', (definitions) => {
+        globalItemDefinitions = definitions;
+        appendMessage('Servidor', 'Definições de itens carregadas!', 'server');
+    });
+
+    socket.on('globalWeaponStats', (stats) => {
+        globalWeaponStats = stats;
+        appendMessage('Servidor', 'Definições de armas carregadas!', 'server');
+    });
+
+    socket.on('playerStateUpdate', (playerState) => {
+        if (currentPlayerData && currentPlayerData.playerId === playerState.playerId) {
+            currentPlayerData.x_pos = playerState.x_pos;
+            currentPlayerData.y_pos = playerState.y_pos;
+            currentPlayerData.life = playerState.life;
+            currentPlayerData.life_max = playerState.life_max;
+            currentPlayerData.equippedItem = playerState.equippedItem; // Atualiza item equipado
+            updateHealthBar();
+            drawGame(); // Redesenha para mostrar a nova posição e status
+        }
+    });
+
+    socket.on('playerInventoryUpdate', (inventory) => {
+        if (currentPlayerData) {
+            currentPlayerData.inventory = inventory;
+            renderInventory();
+            renderHotbar();
+            appendMessage('Servidor', 'Inventário atualizado.', 'server');
+        }
+    });
+
+    socket.on('playerHealthUpdate', (data) => {
+        if (currentPlayerData && currentPlayerData.playerId === data.playerId) {
+            currentPlayerData.life = data.life;
+            updateHealthBar();
+        } else if (otherPlayers[data.playerId]) {
+            otherPlayers[data.playerId].life = data.life;
+        }
+        drawGame(); // Redesenha para atualizar visualmente a vida de players
+    });
+
+    socket.on('playerRespawn', (data) => {
+        if (currentPlayerData && currentPlayerData.playerId === data.playerId) { // Se for o player local
+            currentPlayerData.x_pos = data.x;
+            currentPlayerData.y_pos = data.y;
+            currentPlayerData.life = data.life; // Vida completa
+            updateHealthBar();
+            appendMessage('Servidor', 'Você reapareceu!', 'server');
+        } else if (otherPlayers[data.playerId]) { // Se for outro player
+            otherPlayers[data.playerId].x_pos = data.x;
+            otherPlayers[data.playerId].y_pos = data.y;
+            otherPlayers[data.playerId].life = data.life; // Vida completa
+        }
+        drawGame();
+    });
+
+    // Eventos multiplayer
+    socket.on('currentPlayers', (players) => {
+        otherPlayers = {};
+        players.forEach(p => {
+            otherPlayers[p.playerId] = p;
+        });
+        appendMessage('Servidor', `Carregados ${Object.keys(otherPlayers).length} outros jogadores.`, 'server');
+        drawGame();
+    });
+
+    socket.on('playerConnected', (playerInfo) => {
+        if (playerInfo.playerId !== currentPlayerData.playerId) {
+            otherPlayers[playerInfo.playerId] = playerInfo;
+            appendMessage('Servidor', `${playerInfo.username} conectou.`, 'server');
+            drawGame();
+        }
+    });
+
+    socket.on('playerDisconnected', (playerId) => {
+        if (otherPlayers[playerId]) {
+            appendMessage('Servidor', `${otherPlayers[playerId].username} desconectou.`, 'server');
+            delete otherPlayers[playerId];
+            drawGame();
+        }
+    });
+
+    socket.on('playerMoved', (data) => {
+        if (otherPlayers[data.playerId]) {
+            otherPlayers[data.playerId].x_pos = data.x;
+            otherPlayers[data.playerId].y_pos = data.y;
+            drawGame();
+        }
+    });
+
+    socket.on('playerEquippedItem', (data) => {
+        if (otherPlayers[data.playerId]) {
+            otherPlayers[data.playerId].equippedItem = data.equippedItemId;
+            drawGame(); // Redesenha para mostrar a arma equipada de outros
+        }
+    });
+
+    socket.on('equippedItemUpdate', (itemId) => {
+        if (currentPlayerData) {
+            currentPlayerData.equippedItem = itemId;
+            renderHotbar(); // Atualiza a hotbar para mostrar o item equipado
+            drawGame(); // Redesenha para atualizar visual do player
+        }
+    });
+
+    socket.on('playerDied', (data) => {
+        const deceasedPlayer = otherPlayers[data.playerId] || (currentPlayerData.playerId === data.playerId ? currentPlayerData : null);
+        const killerPlayer = otherPlayers[data.killerId] || (currentPlayerData.playerId === data.killerId ? currentPlayerData : null);
+
+        if (deceasedPlayer && killerPlayer) {
+            appendMessage('Servidor', `${deceasedPlayer.username} foi derrotado por ${killerPlayer.username}!`, 'server');
+        } else if (deceasedPlayer) {
+            appendMessage('Servidor', `${deceasedPlayer.username} foi derrotado!`, 'server');
+        }
+    });
+}
+
+// --- 4. Movimento e Desenho do Jogo ---
+let keysPressed = {}; // Para gerenciar múltiplos botões pressionados
+
+document.addEventListener('keydown', (e) => {
+    keysPressed[e.key] = true;
+    handleMovement(); // Chama a função de movimento no keydown
+});
+
+document.addEventListener('keyup', (e) => {
+    delete keysPressed[e.key];
+});
+
+function handleMovement() {
+    if (!currentPlayerData) return;
+
+    let moved = false;
+    let newX = currentPlayerData.x_pos;
+    let newY = currentPlayerData.y_pos;
+
+    if (keysPressed['w'] || keysPressed['W'] || keysPressed['ArrowUp']) {
+        newY--;
+        moved = true;
+    }
+    if (keysPressed['s'] || keysPressed['S'] || keysPressed['ArrowDown']) {
+        newY++;
+        moved = true;
+    }
+    if (keysPressed['a'] || keysPressed['A'] || keysPressed['ArrowLeft']) {
+        newX--;
+        moved = true;
+    }
+    if (keysPressed['d'] || keysPressed['D'] || keysPressed['ArrowRight']) {
+        newX++;
+        moved = true;
+    }
+
+    // Garante que o jogador permaneça dentro dos limites do mapa
+    newX = Math.max(0, Math.min(MAP_WIDTH - 1, newX));
+    newY = Math.max(0, Math.min(MAP_HEIGHT - 1, newY));
+
+    if (moved && (newX !== currentPlayerData.x_pos || newY !== currentPlayerData.y_pos)) {
+        currentPlayerData.x_pos = newX;
+        currentPlayerData.y_pos = newY;
+        socket.emit('playerMovement', { playerId: currentPlayerData.playerId, x: currentPlayerData.x_pos, y: currentPlayerData.y_pos });
+        drawGame(); // Redesenha imediatamente para feedback visual
+    }
+}
+
+// CORREÇÃO: Loop de jogo para movimento contínuo e atualizações visuais
+function gameLoop() {
+    handleMovement(); // Verifica e envia movimento se teclas estiverem pressionadas
+    // drawGame(); // Já é chamado por handleMovement ou por eventos de socket
+    requestAnimationFrame(gameLoop);
+}
+
+
+function drawGame() {
+    ctx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+    // Desenha o grid
+    for (let x = 0; x < MAP_WIDTH; x++) {
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            ctx.strokeRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        }
+    }
+
+    // Desenha outros jogadores
+    for (const playerId in otherPlayers) {
+        const player = otherPlayers[playerId];
+        ctx.fillStyle = 'blue'; // Outros jogadores em azul
+        ctx.drawImage(otherPlayerImage, player.x_pos * TILE_SIZE, player.y_pos * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+
+        // Desenha nome de usuário dos outros players
+        ctx.font = '12px Arial';
+        ctx.fillStyle = 'white';
+        ctx.textAlign = 'center';
+        ctx.fillText(player.username, player.x_pos * TILE_SIZE + TILE_SIZE / 2, player.y_pos * TILE_SIZE - 5);
+
+        // Desenha barra de vida para outros jogadores (simples)
+        const healthBarWidth = TILE_SIZE * (player.life / player.life_max);
+        ctx.fillStyle = 'red';
+        ctx.fillRect(player.x_pos * TILE_SIZE, player.y_pos * TILE_SIZE - 20, TILE_SIZE, 5);
+        ctx.fillStyle = 'green';
+        ctx.fillRect(player.x_pos * TILE_SIZE, player.y_pos * TILE_SIZE - 20, healthBarWidth, 5);
+
+        // Desenha item equipado de outros players (se houver e for arma)
+        if (player.equippedItem && globalItemDefinitions[player.equippedItem] && globalItemDefinitions[player.equippedItem].type === 'weapon') {
+            ctx.drawImage(weaponImage, player.x_pos * TILE_SIZE + TILE_SIZE / 2 + 10, player.y_pos * TILE_SIZE + TILE_SIZE / 2 + 10, TILE_SIZE / 2, TILE_SIZE / 2);
+        }
+    }
+
+    // Desenha o jogador atual (sempre por cima)
+    if (currentPlayerData) {
+        ctx.fillStyle = 'red'; // Jogador atual em vermelho
+        ctx.drawImage(playerImage, currentPlayerData.x_pos * TILE_SIZE, currentPlayerData.y_pos * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+
+        // Desenha o nome do usuário
+        ctx.font = '14px Arial';
+        ctx.fillStyle = 'white';
+        ctx.textAlign = 'center';
+        ctx.fillText(currentPlayerData.username, currentPlayerData.x_pos * TILE_SIZE + TILE_SIZE / 2, currentPlayerData.y_pos * TILE_SIZE - 15);
+
+        // Desenha o item equipado (se houver e for arma)
+        if (currentPlayerData.equippedItem && globalItemDefinitions[currentPlayerData.equippedItem] && globalItemDefinitions[currentPlayerData.equippedItem].type === 'weapon') {
+            ctx.drawImage(weaponImage, currentPlayerData.x_pos * TILE_SIZE + TILE_SIZE / 2 + 10, currentPlayerData.y_pos * TILE_SIZE + TILE_SIZE / 2 + 10, TILE_SIZE / 2, TILE_SIZE / 2);
+        }
+    }
+}
+
+function updateHealthBar() {
+    if (currentPlayerData) {
+        const percentage = (currentPlayerData.life / currentPlayerData.life_max) * 100;
+        healthBar.style.width = `${percentage}%`;
+        healthBar.textContent = `${currentPlayerData.life}/${currentPlayerData.life_max}`;
+        healthBar.style.backgroundColor = percentage > 50 ? 'green' : percentage > 20 ? 'orange' : 'red';
+    }
+}
+
+
+// --- 5. Inventário e Hotbar ---
+function toggleInventory() {
+    inventoryVisible = !inventoryVisible;
+    inventoryContainer.style.display = inventoryVisible ? 'block' : 'none';
+}
+
+function renderInventory() {
+    const inventoryGrid = document.getElementById('inventoryGrid');
+    inventoryGrid.innerHTML = ''; // Limpa o grid
+
+    for (let i = 0; i < INVENTORY_SIZE; i++) {
+        const slot = document.createElement('div');
+        slot.classList.add('inventory-slot');
+
+        const itemInSlot = currentPlayerData.inventory[i];
+
+        if (itemInSlot && globalItemDefinitions[itemInSlot.item_id]) {
+            const itemDef = globalItemDefinitions[itemInSlot.item_id];
+            const itemImg = document.createElement('img');
+            itemImg.src = `assets/${itemDef.image_path}`; // Assumindo 'image_path' no itemDef
+            itemImg.alt = itemDef.name;
+            itemImg.title = `${itemDef.name} (x${itemInSlot.quantity})\n${itemDef.description}`;
+            slot.appendChild(itemImg);
+
+            const quantitySpan = document.createElement('span');
+            quantitySpan.classList.add('item-quantity');
+            quantitySpan.textContent = itemInSlot.quantity;
+            slot.appendChild(quantitySpan);
+
+            slot.addEventListener('click', () => {
+                socket.emit('equipItem', i); // Envia o índice do slot para equipar
+            });
+        }
+        inventoryGrid.appendChild(slot);
+    }
+}
+
+function renderHotbar() {
+    hotbarContainer.innerHTML = ''; // Limpa a hotbar
+
+    for (let i = 0; i < HOTBAR_SIZE; i++) {
+        const slot = document.createElement('div');
+        slot.classList.add('hotbar-slot');
+
+        const itemInSlot = currentPlayerData.inventory[i]; // Hotbar mostra os primeiros X slots do inventário
+
+        if (itemInSlot && globalItemDefinitions[itemInSlot.item_id]) {
+            const itemDef = globalItemDefinitions[itemInSlot.item_id];
+            const itemImg = document.createElement('img');
+            itemImg.src = `assets/${itemDef.image_path}`;
+            itemImg.alt = itemDef.name;
+            itemImg.title = `${itemDef.name} (x${itemInSlot.quantity})`;
+            slot.appendChild(itemImg);
+
+            const quantitySpan = document.createElement('span');
+            quantitySpan.classList.add('item-quantity');
+            quantitySpan.textContent = itemInSlot.quantity;
+            slot.appendChild(quantitySpan);
+
+            // Adiciona borda de equipado
+            if (currentPlayerData.equippedItem === itemDef.id) {
+                slot.classList.add('equipped');
+            }
+        }
+        slot.addEventListener('click', () => {
+            socket.emit('equipItem', i); // Envia o índice do slot para equipar/desequipar
+        });
+        hotbarContainer.appendChild(slot);
+    }
+}
+
+// --- 6. Interação com o Chat e Comandos ---
+sendChatButton.addEventListener('click', () => {
+    const message = chatInput.value.trim();
+    if (message) {
         if (message.startsWith('/')) {
             socket.emit('chatCommand', message);
         } else {
-            socket.emit('chatMessage', message); // NOVO: Evento para mensagens de chat normais
-            appendMessage(`Você: ${message}`, 'chat'); // Adiciona a própria mensagem instantaneamente no chat
+            socket.emit('chatMessage', message);
         }
-        messageInput.value = '';
+        chatInput.value = '';
     }
 });
 
-// NOVO: Função para equipar item (chamada pelo clique nos slots)
-function equipItem(slotIndex) {
-    if (localPlayer.inventory && localPlayer.inventory.length > slotIndex) {
-        const itemToEquip = localPlayer.inventory[slotIndex];
-        socket.emit('equipItem', slotIndex); // Envia o índice do slot para o servidor
-    } else {
-        socket.emit('equipItem', null); // Desequipar
-    }
-}
-
-// NOVO: Lógica de Ataque (Clique do mouse)
-gameMap.addEventListener('mousedown', (event) => {
-    if (localPlayer.equippedItem && event.button === 0) { // Botão esquerdo do mouse
-        const mapRect = gameMap.getBoundingClientRect();
-        const clickX = event.clientX - mapRect.left;
-        const clickY = event.clientY - mapRect.top;
-
-        // Converter coordenadas do clique para coordenadas do mapa em células
-        const clickedCellX = Math.floor(clickX / TILE_SIZE);
-        const clickedCellY = Math.floor(clickY / TILE_SIZE);
-
-        // Encontrar qual jogador (se houver) está na célula clicada
-        let targetPlayerId = null;
-        if (clickedCellX === localPlayer.x_pos && clickedCellY === localPlayer.y_pos) {
-            // Clicou em si mesmo, pode ser um ataque para debug ou cura
-            // targetPlayerId = localPlayer.id; // Descomente para se atacar
-        } else {
-            for (const id in otherPlayers) {
-                if (otherPlayers[id].x_pos === clickedCellX && otherPlayers[id].y_pos === clickedCellY) {
-                    targetPlayerId = id;
-                    break;
-                }
-            }
-        }
-
-        if (targetPlayerId) {
-            socket.emit('playerAttack', targetPlayerId);
-        } else {
-            appendMessage('Nenhum alvo válido encontrado na posição clicada.', 'server');
-        }
+chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        sendChatButton.click();
     }
 });
 
-
-// --- 7. Inicialização da Aplicação (DOMContentLoaded) ---
-document.addEventListener('DOMContentLoaded', () => {
-    console.log("DOM Content Loaded. Initializing app...");
-    showAuthUI();
-    // loadWeaponStats(); // Não é mais necessário, será recebido do servidor
-    createMap(); // Cria o mapa inicial
-
-    // Configurar Event Listeners do DOM
-    switchAuthLink.addEventListener('click', (event) => {
-        event.preventDefault();
-        setAuthMode(!currentAuthModeIsLogin);
-    });
-
-    closeInventoryButton.addEventListener('click', () => {
-        toggleInventoryMenu();
-    });
-
-    messageInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            sendButton.click();
-        }
-    });
-
-    // Event listener para o movimento do mouse para rotação da arma
-    document.addEventListener('mousemove', (event) => {
-        mouseX = event.clientX;
-        mouseY = event.clientY;
-        updateWeaponRotation();
-    });
-});
-
-// --- 8. Atalhos de Teclado e Movimento ---
-document.addEventListener('keydown', (event) => {
-    // Atalho para focar/desfocar o chat com ';'
-    if (event.key === ';') {
-        event.preventDefault();
-        if (messageInput) {
-            if (document.activeElement === messageInput) {
-                messageInput.blur();
-            } else {
-                messageInput.focus();
-            }
-        }
+// --- 7. Lógica de Combate ---
+// CORREÇÃO: Ataque automático ao clicar ou segurar, ou um botão de ataque
+attackButton.addEventListener('click', () => {
+    if (!currentPlayerData || !currentPlayerData.equippedItem) {
+        appendMessage('Servidor', 'Você precisa equipar uma arma para atacar!', 'server');
+        return;
     }
-
-    // Atalho para abrir/fechar inventário com 'Esc'
-    if (event.key === 'Escape') {
-        toggleInventoryMenu();
-        if (document.activeElement === messageInput) {
-            messageInput.blur();
-        }
-    }
-
-    // Seleção de Hotbar (teclas 1-5)
-    if (!isNaN(parseInt(event.key)) && parseInt(event.key) >= 1 && parseInt(event.key) <= 5) {
-        const slotIndex = parseInt(event.key) - 1; // 0-indexed
-        equipItem(slotIndex); // Equipar o item do slot da hotbar
-    }
-
-    // Movimento do Jogador (WASD ou Setas)
-    let newPlayerX = localPlayer.x_pos;
-    let newPlayerY = localPlayer.y_pos;
-
-    if (document.activeElement === messageInput) { // Não move se o chat estiver focado
+    // CORREÇÃO: Implementar lógica de seleção de alvo ou atacar o mais próximo
+    // Por simplicidade, vamos atacar o player mais próximo visível.
+    const targets = Object.values(otherPlayers).filter(p => p.life > 0);
+    if (targets.length === 0) {
+        appendMessage('Servidor', 'Nenhum alvo válido por perto.', 'server');
         return;
     }
 
-    if (event.key === 'ArrowUp' || event.key.toLowerCase() === 'w') {
-        newPlayerY--;
-    } else if (event.key === 'ArrowDown' || event.key.toLowerCase() === 's') {
-        newPlayerY++;
-    } else if (event.key === 'ArrowLeft' || event.key.toLowerCase() === 'a') {
-        newPlayerX--;
-    } else if (event.key === 'ArrowRight' || event.key.toLowerCase() === 'd') {
-        newPlayerX++;
+    // Encontra o alvo mais próximo
+    let closestTarget = null;
+    let minDistance = Infinity;
+    for (const target of targets) {
+        const distance = Math.sqrt(
+            Math.pow(currentPlayerData.x_pos - target.x_pos, 2) +
+            Math.pow(currentPlayerData.y_pos - target.y_pos, 2)
+        );
+        if (distance < minDistance) {
+            minDistance = distance;
+            closestTarget = target;
+        }
     }
 
-    // Limita o movimento dentro dos limites do mapa
-    newPlayerX = Math.max(0, Math.min(MAP_WIDTH - 1, newPlayerX));
-    newPlayerY = Math.max(0, Math.min(MAP_HEIGHT - 1, newPlayerY));
-
-    if (newPlayerX !== localPlayer.x_pos || newPlayerY !== localPlayer.y_pos) {
-        localPlayer.x_pos = newPlayerX;
-        localPlayer.y_pos = newPlayerY;
-        updatePlayerPositionOnMap();
-        socket.emit('playerMovement', { x: localPlayer.x_pos, y: localPlayer.y_pos, playerId: localPlayer.id });
+    if (closestTarget) {
+        socket.emit('playerAttack', closestTarget.playerId);
+        appendMessage('Você', `Atacando ${closestTarget.username}...`, 'chat');
+    } else {
+        appendMessage('Servidor', 'Nenhum alvo válido por perto.', 'server');
     }
 });
 
+
+// --- Inicialização ---
+document.addEventListener('DOMContentLoaded', () => {
+    showAuthScreen();
+    initializeSocket();
+    requestAnimationFrame(gameLoop); // Inicia o loop do jogo
+});

@@ -57,10 +57,11 @@ async function loadGlobalItemDefinitions() {
 
 async function loadGlobalWeaponStats() {
     try {
-        const weaponStatsPath = path.join(__dirname, '../data/weapon_stats.json');
+        // CORREÇÃO: Caminho do weapon_stats.json
+        const weaponStatsPath = path.join(__dirname, '../client/data/weapon_stats.json'); // Ajustado para client/data
         const data = await fs.readFile(weaponStatsPath, 'utf8');
         globalWeaponStats = JSON.parse(data);
-        console.log('Definições de estatísticas de armas carregadas do arquivo:', globalWeaponStats);
+        console.log('Definições de estatísticas de armas carregadas do arquivo.'); // Removido o log completo para não poluir
     } catch (err) {
         console.error('Erro ao carregar weapon_stats.json:', err.message);
     }
@@ -91,18 +92,21 @@ async function testSupabaseConnection() {
 
 testSupabaseConnection();
 
-// Mapa de jogadores conectados: { socket.id: { playerId: uuid, username: string, x: number, y: number, life: number, life_max: number, inventory: [], equippedItem: id } }
+// Mapa de jogadores conectados: { socket.id: { playerId: uuid, username: string, x: number, y: number, life: number, life_max: number, inventory: [], equippedItem: id, lastAttackTime: timestamp } }
 const connectedPlayers = {};
+const ATTACK_COOLDOWN = 1000; // 1 segundo de cooldown para ataques
 
 app.use(express.json());
 
 // Função para inserir um novo perfil de jogador na tabela 'players'
 async function insertPlayerProfile(userId, username, email) {
     try {
+        // CORREÇÃO: Não inserir inventory e equippedItem aqui, eles são carregados separadamente.
+        // E garantir que 'id' é o userId para RLS.
         const { data, error } = await supabase
             .from('players')
             .insert([
-                { id: userId, username: username, email: email, x_pos: 0, y_pos: 0, money: 0, life: 10, life_max: 10 } // Adicionado life e life_max
+                { id: userId, username: username, email: email, x_pos: 0, y_pos: 0, money: 0, life: 10, life_max: 10, inventory: [], equipped_item_id: null } // Adicionado life e life_max, e campos para inventário
             ])
             .select();
 
@@ -150,13 +154,14 @@ async function loadPlayerInventory(playerId) {
     try {
         const { data, error } = await supabase
             .from('player_inventory')
-            .select('*')
+            .select('item_id, quantity') // Seleciona apenas o ID do item e a quantidade
             .eq('player_id', playerId);
 
         if (error) {
             console.error('Erro ao carregar inventário do jogador:', error.message);
             return [];
         }
+        // console.log(`Inventário carregado para ${playerId}:`, data); // Para debug
         return data;
     } catch (err) {
         console.error('Erro inesperado ao carregar inventário:', err.message);
@@ -164,6 +169,47 @@ async function loadPlayerInventory(playerId) {
     }
 }
 
+// Função para salvar o inventário de um jogador
+async function savePlayerInventory(playerId, inventory) {
+    try {
+        // Primeiro, delete todas as entradas existentes para o jogador
+        const { error: deleteError } = await supabase
+            .from('player_inventory')
+            .delete()
+            .eq('player_id', playerId);
+
+        if (deleteError) {
+            console.error('Erro ao limpar inventário existente:', deleteError.message);
+            return false;
+        }
+
+        // Prepare os dados para inserção
+        const itemsToInsert = inventory.map(item => ({
+            player_id: playerId,
+            item_id: item.item_id,
+            quantity: item.quantity
+        }));
+
+        // Insira os novos itens
+        if (itemsToInsert.length > 0) {
+            const { error: insertError } = await supabase
+                .from('player_inventory')
+                .insert(itemsToInsert);
+
+            if (insertError) {
+                console.error('Erro ao salvar inventário:', insertError.message);
+                return false;
+            }
+        }
+        return true;
+    } catch (err) {
+        console.error('Erro inesperado ao salvar inventário:', err.message);
+        return false;
+    }
+}
+
+
+// --- Rotas de Autenticação ---
 app.post('/auth/signup', async (req, res) => {
     const { email, password, username } = req.body;
 
@@ -172,6 +218,7 @@ app.post('/auth/signup', async (req, res) => {
     }
 
     try {
+        // CORREÇÃO: Verificar se o username já existe ANTES de tentar o signup no Auth
         const { data: existingPlayers, error: existingPlayerError } = await supabase
             .from('players')
             .select('id')
@@ -205,16 +252,19 @@ app.post('/auth/signup', async (req, res) => {
             return res.status(500).json({ error: 'Erro inesperado no registro do usuário.' });
         }
 
-        let playerProfile = await loadPlayerProfile(user.id);
-        if (!playerProfile) {
-            playerProfile = await insertPlayerProfile(user.id, username, email); // Usa o username diretamente do req.body
-        } else {
-            console.log('Perfil do jogador já existe, não recriando.');
-        }
+        // CORREÇÃO: Tenta criar o perfil do jogador IMEDIATAMENTE após o registro no Auth
+        const playerProfile = await insertPlayerProfile(user.id, username, email);
 
         if (!playerProfile) {
-            console.error('Falha ao criar perfil do jogador após registro Auth. Verifique logs.');
-            return res.status(500).json({ error: 'Registro bem-sucedido no Auth, mas falha ao criar perfil do jogador. Verifique logs do servidor e RLS/restrições de tabela.' });
+            console.error('Falha ao criar perfil do jogador após registro Auth. Tentando reverter registro Auth.');
+            // CORREÇÃO: Se falhar ao criar o perfil do jogador, deletar o usuário Auth para evitar lixo
+            const { error: deleteUserError } = await supabase.auth.admin.deleteUser(user.id);
+            if (deleteUserError) {
+                console.error('Erro ao deletar usuário Auth após falha na criação do player:', deleteUserError.message);
+            } else {
+                console.log(`Usuário Auth ${user.id} deletado com sucesso após falha na criação do player.`);
+            }
+            return res.status(500).json({ error: 'Registro bem-sucedido no Auth, mas falha ao criar perfil do jogador. Verifique RLS e restrições de tabela.' });
         }
 
         console.log('Novo usuário e jogador registrados:', user.id, username);
@@ -248,7 +298,7 @@ app.post('/auth/login', async (req, res) => {
             return res.status(401).json({ error: 'Login falhou, usuário não encontrado.' });
         }
 
-        const playerProfile = await loadPlayerProfile(user.id);
+        let playerProfile = await loadPlayerProfile(user.id);
 
         if (!playerProfile) {
             console.warn(`Perfil do jogador para ID ${user.id} não encontrado na tabela 'players' após login. Tentando criar.`);
@@ -276,7 +326,7 @@ app.post('/auth/login', async (req, res) => {
 // Middleware para servir arquivos estáticos do frontend
 app.use(express.static(path.join(__dirname, '../client')));
 
-// NOVO: Servir assets da pasta 'assets'
+// Servir assets da pasta 'assets' (já estava certo)
 app.use('/assets', express.static(path.join(__dirname, '../client/assets')));
 
 
@@ -286,10 +336,9 @@ io.on('connection', async (socket) => {
 
     // Envia definições de itens e armas imediatamente para o cliente
     socket.emit('globalItemDefinitions', globalItemDefinitions);
-    socket.emit('globalWeaponStats', globalWeaponStats); // Envia weapon_stats
+    socket.emit('globalWeaponStats', globalWeaponStats);
     console.log('Definições de itens e armas enviadas para o novo cliente.');
 
-    // NOVO: Quando um jogador loga e o cliente envia seu ID, atualize o estado no servidor
     socket.on('playerLoggedIn', async (playerId) => {
         if (!playerId) {
             console.warn(`playerLoggedIn: Player ID é nulo para socket ${socket.id}`);
@@ -298,7 +347,8 @@ io.on('connection', async (socket) => {
 
         const playerProfile = await loadPlayerProfile(playerId);
         if (playerProfile) {
-            // Adiciona o jogador ao registro global
+            const inventory = await loadPlayerInventory(playerId); // Carrega inventário
+            // CORREÇÃO: Inicializa o jogador com dados completos, incluindo inventário e item equipado
             connectedPlayers[socket.id] = {
                 socketId: socket.id,
                 playerId: playerId,
@@ -307,16 +357,28 @@ io.on('connection', async (socket) => {
                 y_pos: playerProfile.y_pos,
                 life: playerProfile.life,
                 life_max: playerProfile.life_max,
-                inventory: await loadPlayerInventory(playerId), // Carrega inventário ao conectar
-                equippedItem: null // Definir item equipado padrão, se houver
+                inventory: inventory,
+                equippedItem: playerProfile.equipped_item_id, // Usar o campo do banco
+                lastAttackTime: 0 // Para cooldown de ataque
             };
             console.log(`Socket ${socket.id} associado ao Player ID: ${playerId} (${playerProfile.username})`);
 
             // Envia o estado atual do jogador recém-logado para ele mesmo
             socket.emit('playerStateUpdate', connectedPlayers[socket.id]);
+            socket.emit('playerInventoryUpdate', inventory); // Garante que o inventário é enviado
 
             // Envia todos os jogadores atualmente conectados (exceto ele mesmo) para o novo jogador
-            const otherPlayers = Object.values(connectedPlayers).filter(p => p.playerId !== playerId);
+            const otherPlayers = Object.values(connectedPlayers)
+                .filter(p => p.playerId !== playerId)
+                .map(p => ({
+                    playerId: p.playerId,
+                    username: p.username,
+                    x_pos: p.x_pos,
+                    y_pos: p.y_pos,
+                    life: p.life,
+                    life_max: p.life_max,
+                    equippedItem: p.equippedItem // Envia o item equipado para outros clientes
+                }));
             socket.emit('currentPlayers', otherPlayers);
             console.log(`Enviando ${otherPlayers.length} jogadores existentes para o novo jogador.`);
 
@@ -327,7 +389,8 @@ io.on('connection', async (socket) => {
                 x_pos: playerProfile.x_pos,
                 y_pos: playerProfile.y_pos,
                 life: playerProfile.life,
-                life_max: playerProfile.life_max
+                life_max: playerProfile.life_max,
+                equippedItem: playerProfile.equipped_item_id // Envia o item equipado
             });
             console.log(`Notificando outros clientes sobre novo jogador: ${playerProfile.username}`);
         } else {
@@ -335,53 +398,47 @@ io.on('connection', async (socket) => {
         }
     });
 
-    // Evento para solicitar inventário após login (mantido, mas playerLoggedIn já carrega)
-    socket.on('requestPlayerInventory', async (playerId) => {
-        if (connectedPlayers[socket.id] && connectedPlayers[socket.id].playerId === playerId) {
-            const inventory = await loadPlayerInventory(playerId);
-            connectedPlayers[socket.id].inventory = inventory; // Atualiza o estado interno do servidor
-            socket.emit('playerInventoryUpdate', inventory);
-        } else {
-            console.warn(`Tentativa de solicitar inventário para ID inválido: ${playerId} do socket ${socket.id}`);
-        }
-    });
-
-    // NOVO: Evento para receber movimento do jogador
+    // Evento para receber movimento do jogador
     socket.on('playerMovement', async (data) => {
         const player = connectedPlayers[socket.id];
-        if (player && player.playerId === data.playerId) { // Confirma que o socket é do jogador
+        if (player) { // Não precisa mais checar playerId === data.playerId aqui, já está associado
             const { x, y } = data;
 
-            // Limita o movimento dentro dos limites do mapa (assumindo 10x10 como no client)
-            player.x_pos = Math.max(0, Math.min(9, x)); // MAP_WIDTH - 1
-            player.y_pos = Math.max(0, Math.min(9, y)); // MAP_HEIGHT - 1
+            player.x_pos = Math.max(0, Math.min(9, x));
+            player.y_pos = Math.max(0, Math.min(9, y));
 
-            // TODO: Salvar a posição no banco de dados (ainda opcional para testes)
-            // if (needsUpdateInDb) {
-            //     const { error } = await supabase.from('players').update({ x_pos: player.x_pos, y_pos: player.y_pos }).eq('id', player.playerId);
-            //     if (error) console.error('Erro ao salvar posição:', error.message);
-            // }
+            // CORREÇÃO: Salvar a posição no banco de dados para persistência
+            // Pode ser feito com um debounce ou em intervalos regulares para evitar spam de writes no DB
+            const { error } = await supabase.from('players').update({ x_pos: player.x_pos, y_pos: player.y_pos }).eq('id', player.playerId);
+            if (error) console.error('Erro ao salvar posição:', error.message);
 
             // Transmitir a nova posição para outros jogadores (multiplayer)
             socket.broadcast.emit('playerMoved', { playerId: player.playerId, x: player.x_pos, y: player.y_pos });
         } else {
-            console.warn(`Movimento inválido para ID: ${data.playerId} do socket ${socket.id}`);
+            console.warn(`Movimento inválido: Jogador não encontrado para socket ${socket.id}`);
         }
     });
 
-    // NOVO: Evento para equipar item
-    socket.on('equipItem', (itemSlotIndex) => {
+    // Evento para equipar item
+    socket.on('equipItem', async (itemSlotIndex) => { // Adicionado async
         const player = connectedPlayers[socket.id];
         if (player && player.inventory) {
             const itemToEquip = player.inventory[itemSlotIndex];
             if (itemToEquip && globalItemDefinitions[itemToEquip.item_id]) {
                 player.equippedItem = itemToEquip.item_id;
                 console.log(`${player.username} equipou: ${globalItemDefinitions[itemToEquip.item_id].name}`);
-                // Notificar o próprio cliente e outros sobre o item equipado
+
+                // CORREÇÃO: Salvar item equipado no banco de dados
+                const { error } = await supabase.from('players').update({ equipped_item_id: player.equippedItem }).eq('id', player.playerId);
+                if (error) console.error('Erro ao salvar item equipado:', error.message);
+
                 socket.emit('equippedItemUpdate', player.equippedItem);
                 socket.broadcast.emit('playerEquippedItem', { playerId: player.playerId, equippedItemId: player.equippedItem });
             } else {
                 player.equippedItem = null; // Desequipar se o slot estiver vazio
+                const { error } = await supabase.from('players').update({ equipped_item_id: null }).eq('id', player.playerId);
+                if (error) console.error('Erro ao desequipar item:', error.message);
+
                 socket.emit('equippedItemUpdate', player.equippedItem);
                 socket.broadcast.emit('playerEquippedItem', { playerId: player.playerId, equippedItemId: player.equippedItem });
                 console.log(`${player.username} desequipou.`);
@@ -389,38 +446,51 @@ io.on('connection', async (socket) => {
         }
     });
 
-    // NOVO: Lógica de Combate
+    // Lógica de Combate
     socket.on('playerAttack', async (targetPlayerId) => {
         const attacker = connectedPlayers[socket.id];
+        // CORREÇÃO: Encontrar o socket do alvo dinamicamente
         const targetSocketId = Object.keys(connectedPlayers).find(sId => connectedPlayers[sId].playerId === targetPlayerId);
         const target = connectedPlayers[targetSocketId];
 
-        if (!attacker || !target) {
-            socket.emit('mensagemDoServidor', 'Erro: Atacante ou alvo inválido.');
+        if (!attacker) {
+            socket.emit('serverMessage', 'Erro: Você não está logado para atacar.');
+            return;
+        }
+
+        if (attacker.lastAttackTime && (Date.now() - attacker.lastAttackTime < ATTACK_COOLDOWN)) {
+            socket.emit('serverMessage', 'Ataque em cooldown. Espere um pouco.');
+            return;
+        }
+
+        if (!target) {
+            socket.emit('serverMessage', 'Erro: Alvo inválido ou não encontrado.');
             return;
         }
         if (attacker.playerId === target.playerId) {
-            socket.emit('mensagemDoServidor', 'Você não pode se atacar!');
+            socket.emit('serverMessage', 'Você não pode se atacar!');
             return;
         }
 
         const equippedWeaponId = attacker.equippedItem;
         const equippedWeaponDef = equippedWeaponId ? globalItemDefinitions[equippedWeaponId] : null;
+        // CORREÇÃO: Acessar globalWeaponStats pelo nome do item, não pelo ID do item.
         const weaponStats = equippedWeaponDef && equippedWeaponDef.type === 'weapon' ? globalWeaponStats[equippedWeaponDef.name] : null;
 
+
         if (!weaponStats) {
-            socket.emit('mensagemDoServidor', 'Você não tem uma arma equipada válida para atacar!');
+            socket.emit('serverMessage', 'Você não tem uma arma equipada válida para atacar!');
             return;
         }
 
-        // Lógica de alcance (simplificada para teste, assumindo proximidade visual)
+        // Lógica de alcance
         const distance = Math.sqrt(
             Math.pow(attacker.x_pos - target.x_pos, 2) +
             Math.pow(attacker.y_pos - target.y_pos, 2)
         );
 
         if (distance > weaponStats.range) {
-            socket.emit('mensagemDoServidor', `O alvo está muito longe. Alcance da arma: ${weaponStats.range}. Distância atual: ${distance.toFixed(1)}`);
+            socket.emit('serverMessage', `O alvo está muito longe. Alcance da arma: ${weaponStats.range}. Distância atual: ${distance.toFixed(1)}`);
             return;
         }
 
@@ -430,67 +500,81 @@ io.on('connection', async (socket) => {
         target.life -= damage;
         console.log(`${attacker.username} atacou ${target.username} com ${equippedWeaponDef.name}. ${target.username} perdeu ${damage} de vida. Vida restante: ${target.life}`);
 
+        // Atualiza o tempo do último ataque para o cooldown
+        attacker.lastAttackTime = Date.now();
+
         // Notificar clientes sobre a atualização de vida
         io.to(target.socketId).emit('playerHealthUpdate', { playerId: target.playerId, life: target.life, life_max: target.life_max });
-        socket.emit('playerHealthUpdate', { playerId: target.playerId, life: target.life, life_max: target.life_max }); // Para o atacante ver a vida do alvo
+        // Emitir também para o atacante ver a vida do alvo
+        socket.emit('playerHealthUpdate', { playerId: target.playerId, life: target.playerId, life: target.life, life_max: target.life_max });
+        // Notificar todos os outros (exceto atacante e alvo se já notificados)
         socket.broadcast.emit('playerHealthUpdate', { playerId: target.playerId, life: target.life, life_max: target.life_max });
+
+        // CORREÇÃO: Salvar vida do alvo no banco de dados
+        const { error: updateLifeError } = await supabase.from('players').update({ life: target.life }).eq('id', target.playerId);
+        if (updateLifeError) console.error('Erro ao salvar vida do alvo:', updateLifeError.message);
 
 
         if (target.life <= 0) {
             console.log(`${target.username} morreu!`);
             io.emit('playerDied', { playerId: target.playerId, killerId: attacker.playerId });
 
-            // Lógica de drop de itens
-            const { error: deleteError } = await supabase.from('player_inventory').delete().eq('player_id', target.playerId);
-            if (deleteError) {
-                console.error('Erro ao deletar inventário do jogador morto:', deleteError.message);
+            // Lógica de drop de itens (agora salvando)
+            const wasInventorySaved = await savePlayerInventory(target.playerId, []); // Esvazia o inventário
+            if (!wasInventorySaved) {
+                console.error('Erro ao esvaziar inventário do jogador morto.');
+            } else {
+                console.log(`Inventário de ${target.username} esvaziado.`);
             }
-            // TODO: Transferir para o inventário do assassino ou dropar no mapa
-            // Por enquanto, apenas esvazia o inventário do morto.
 
             // Resetar o jogador morto (spawn)
             target.life = target.life_max;
             target.x_pos = Math.floor(Math.random() * 10); // Spawn aleatório
             target.y_pos = Math.floor(Math.random() * 10);
-            io.to(target.socketId).emit('playerRespawn', { x: target.x_pos, y: target.y_pos });
+
+            // CORREÇÃO: Salvar nova posição e vida no banco de dados
+            const { error: respawnSaveError } = await supabase
+                .from('players')
+                .update({ x_pos: target.x_pos, y_pos: target.y_pos, life: target.life })
+                .eq('id', target.playerId);
+            if (respawnSaveError) console.error('Erro ao salvar respawn do jogador:', respawnSaveError.message);
+
+
+            io.to(target.socketId).emit('playerRespawn', { x: target.x_pos, y: target.y_pos, life: target.life, life_max: target.life_max }); // Para o próprio cliente
             socket.broadcast.emit('playerMoved', { playerId: target.playerId, x: target.x_pos, y: target.y_pos }); // Avisa a todos da nova posição
-
-            // Atualizar vida do jogador morto para ele mesmo
-            io.to(target.socketId).emit('playerHealthUpdate', { playerId: target.playerId, life: target.life, life_max: target.life_max });
-
-            // Se o target for o jogador que você está controlando, precisa ser atualizado localmente também
-            if (targetSocketId === socket.id) {
-                // Você morre, precisa de um feedback visual no cliente.
-            }
+            io.to(target.socketId).emit('playerInventoryUpdate', []); // Avisa o jogador que o inventário foi esvaziado.
+            console.log(`${target.username} reapareceu em (${target.x_pos}, ${target.y_pos}) com vida cheia.`);
         }
     });
 
-    // Chat: Apenas mensagens de jogadores, comandos específicos do servidor
-    socket.on('chatMessage', async (message) => { // Renomeado de 'mensagemDoCliente' para clareza
+    // Chat e Comandos
+    socket.on('chatMessage', async (message) => {
         const player = connectedPlayers[socket.id];
         if (!player) {
             socket.emit('serverMessage', 'Erro: Você não está logado para enviar mensagens.');
             return;
         }
+        // CORREÇÃO: Comando /additem e /spawn devem ser tratados via chatCommand (já está).
+        // Se a mensagem começar com '/', enviar para chatCommand.
         if (message.startsWith('/')) {
-            // Se for um comando, trate como comando
             socket.emit('serverMessage', 'Comandos devem ser enviados via evento "chatCommand".');
-        } else {
-            // Mensagem normal do chat
-            const username = player.username;
-            io.emit('chatMessage', { sender: username, text: message }); // Envia para TODOS, incluindo o remetente
-            console.log(`[Chat] ${username}: ${message}`);
+            return;
         }
+        // Mensagem normal do chat
+        const username = player.username;
+        io.emit('chatMessage', { sender: username, text: message });
+        console.log(`[Chat] ${username}: ${message}`);
     });
 
     socket.on('chatCommand', async (command) => {
-        const playerId = connectedPlayers[socket.id]?.playerId;
-        const playerUsername = connectedPlayers[socket.id]?.username;
-
-        if (!playerId) {
+        const player = connectedPlayers[socket.id];
+        if (!player) {
             socket.emit('serverMessage', 'Erro: Você não está logado para usar comandos.');
             return;
         }
+
+        const playerId = player.playerId;
+        const playerUsername = player.username;
 
         if (command.startsWith('/additem ')) {
             const parts = command.split(' ');
@@ -504,56 +588,44 @@ io.on('connection', async (socket) => {
             }
 
             try {
-                const { data: existingInventoryItems, error: findError } = await supabase
-                    .from('player_inventory')
-                    .select('*')
-                    .eq('player_id', playerId)
-                    .eq('item_id', itemToAdd.id);
-
-                if (findError) {
-                    throw findError;
-                }
-
-                let message = '';
                 let inventoryUpdated = false;
+                let message = '';
 
-                let existingItemSlot = null;
-                // Verificar se o item é empilhável e se há um slot existente com espaço
-                if (itemToAdd.max_stack > 1) {
-                    existingItemSlot = existingInventoryItems.find(invItem => invItem.quantity < itemToAdd.max_stack);
-                }
+                // Encontra o item no inventário do jogador (estado do servidor)
+                let existingItemInInventory = player.inventory.find(invItem => invItem.item_id === itemToAdd.id);
 
-                if (existingItemSlot) {
-                    const newQuantity = Math.min(existingItemSlot.quantity + 1, itemToAdd.max_stack || Infinity); // Garante que não exceda max_stack
-                    const { error: updateError } = await supabase
-                        .from('player_inventory')
-                        .update({ quantity: newQuantity })
-                        .eq('id', existingItemSlot.id);
-                    if (updateError) throw updateError;
-                    message = `Você adicionou 1 ${itemToAdd.name}. Quantidade: ${newQuantity}`;
+                if (existingItemInInventory && itemToAdd.max_stack > 1 && existingItemInInventory.quantity < itemToAdd.max_stack) {
+                    // Item empilhável e há espaço
+                    existingItemInInventory.quantity += 1;
+                    message = `Você adicionou 1 ${itemToAdd.name}. Quantidade: ${existingItemInInventory.quantity}`;
+                    inventoryUpdated = true;
+                } else if (!existingItemInInventory || itemToAdd.max_stack === 1) {
+                    // Item não empilhável ou slot cheio, adiciona novo slot
+                    player.inventory.push({ item_id: itemToAdd.id, quantity: 1 });
+                    message = `Você adicionou 1 ${itemToAdd.name} (novo slot).`;
                     inventoryUpdated = true;
                 } else {
-                    const { error: insertError } = await supabase
-                        .from('player_inventory')
-                        .insert([{ player_id: playerId, item_id: itemToAdd.id, quantity: 1 }]);
-                    if (insertError) throw insertError;
-                    message = `Você adicionou 1 ${itemToAdd.name}${existingInventoryItems.length > 0 ? ' (novo slot)' : ''}.`;
-                    inventoryUpdated = true;
+                    // Caso de item empilhável mas sem espaço para empilhar
+                    socket.emit('serverMessage', `Seu inventário para ${itemToAdd.name} está cheio. Max stack: ${itemToAdd.max_stack}.`);
+                    return;
                 }
 
-                socket.emit('serverMessage', message); // Mensagem do servidor para o comando
-
                 if (inventoryUpdated) {
-                    const updatedInventory = await loadPlayerInventory(playerId);
-                    connectedPlayers[socket.id].inventory = updatedInventory; // Atualiza o estado no servidor
-                    socket.emit('playerInventoryUpdate', updatedInventory); // Envia para o cliente
+                    const wasSaved = await savePlayerInventory(playerId, player.inventory);
+                    if (wasSaved) {
+                        socket.emit('serverMessage', message);
+                        socket.emit('playerInventoryUpdate', player.inventory); // Envia para o cliente
+                        console.log(`${playerUsername} adicionou ${itemToAdd.name}. Inventário atualizado.`);
+                    } else {
+                        socket.emit('serverMessage', `Erro ao salvar inventário após adicionar ${itemToAdd.name}.`);
+                    }
                 }
 
             } catch (error) {
                 console.error('Erro ao adicionar item ao inventário:', error.message);
                 socket.emit('serverMessage', `Erro interno ao adicionar item: ${error.message}`);
             }
-        } else if (command.startsWith('/spawn ')) { // Exemplo de comando /spawn
+        } else if (command.startsWith('/spawn ')) {
             const parts = command.split(' ');
             const targetX = parseInt(parts[1]);
             const targetY = parseInt(parts[2]);
@@ -563,22 +635,17 @@ io.on('connection', async (socket) => {
                 return;
             }
 
-            const player = connectedPlayers[socket.id];
-            if (player) {
-                player.x_pos = Math.max(0, Math.min(9, targetX));
-                player.y_pos = Math.max(0, Math.min(9, targetY));
-                // Atualizar no DB
-                const { error } = await supabase.from('players').update({ x_pos: player.x_pos, y_pos: player.y_pos }).eq('id', player.playerId);
-                if (error) console.error('Erro ao salvar posição:', error.message);
+            player.x_pos = Math.max(0, Math.min(9, targetX));
+            player.y_pos = Math.max(0, Math.min(9, targetY));
 
-                socket.emit('serverMessage', `Você foi teleportado para X:${player.x_pos}, Y:${player.y_pos}`);
-                socket.emit('playerRespawn', { x: player.x_pos, y: player.y_pos }); // Para o próprio cliente
-                socket.broadcast.emit('playerMoved', { playerId: player.playerId, x: player.x_pos, y: player.y_pos }); // Para os outros
-            } else {
-                socket.emit('serverMessage', 'Erro: Player não encontrado no estado do servidor.');
-            }
-        }
-        else {
+            // Atualizar no DB
+            const { error } = await supabase.from('players').update({ x_pos: player.x_pos, y_pos: player.y_pos }).eq('id', player.playerId);
+            if (error) console.error('Erro ao salvar posição:', error.message);
+
+            socket.emit('serverMessage', `Você foi teleportado para X:${player.x_pos}, Y:${player.y_pos}`);
+            socket.emit('playerRespawn', { x: player.x_pos, y: player.y_pos });
+            socket.broadcast.emit('playerMoved', { playerId: player.playerId, x: player.x_pos, y: player.y_pos });
+        } else {
             socket.emit('serverMessage', 'Comando desconhecido: ' + command);
         }
     });
@@ -599,4 +666,3 @@ io.on('connection', async (socket) => {
 server.listen(PORT, () => {
     console.log(`Servidor Low Campfire rodando na porta ${PORT}`);
 });
-
