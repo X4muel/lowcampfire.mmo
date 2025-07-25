@@ -32,243 +32,175 @@ body {
 
 h1 {
     color: #00bcd4; /* Azul ciano para o título principal */
-    margin-bottom: 25px;
+    margin-bottom: 20px;
     font-size: 2.5em;
-    text-shadow: 2px 2px 5px rgba(0, 0, 0, 0.4);
+    text-shadow: 0 0 10px rgba(0, 188, 212, 0.7);
 }
 
 h2, h3, h4 {
-    color: #f0f0f0;
-    margin-bottom: 15px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    padding-bottom: 8px;
+    color: #00bcd4;
+    margin-top: 15px;
 }
 
 input[type="text"],
 input[type="email"],
-input[type="password"] {
-    width: calc(100% - 24px); /* Ajuste de padding */
+input[type="password"],
+input[type="number"] {
+    width: calc(100% - 20px);
     padding: 12px;
-    margin-bottom: 15px;
-    border: 1px solid #444; /* Borda mais suave */
+    margin: 10px 0;
+    border: 1px solid #00bcd4; /* Borda ciano */
     border-radius: 6px;
-    background-color: #3a3a3a;
+    background-color: #333; /* Fundo do input */
     color: #e0e0e0;
     font-size: 1em;
     box-sizing: border-box;
-    transition: border-color 0.3s ease, box-shadow 0.3s ease;
-}
-
-input[type="text"]:focus,
-input[type="email"]:focus,
-input[type="password"]:focus {
-    border-color: #00bcd4;
-    box-shadow: 0 0 8px rgba(0, 188, 212, 0.5);
-    outline: none;
 }
 
 button {
-    background-color: #00bcd4; /* Cor de ação principal */
+    background-color: #00bcd4; /* Azul ciano */
     color: white;
     padding: 12px 25px;
     border: none;
     border-radius: 6px;
     cursor: pointer;
     font-size: 1.1em;
-    font-weight: bold;
-    transition: background-color 0.3s ease, transform 0.2s ease;
-    width: 100%;
-    box-sizing: border-box;
+    transition: background-color 0.3s ease, transform 0.1s ease;
+    margin-top: 15px;
 }
 
 button:hover {
-    background-color: #0097a7; /* Tom mais escuro no hover */
-    transform: translateY(-2px);
+    background-color: #0097a7; /* Ciano mais escuro no hover */
+    transform: translateY(-1px);
 }
 
 button:active {
     transform: translateY(0);
 }
 
-#auth-container p {
-    margin-top: 20px;
-    font-size: 0.9em;
-}
-
-#auth-container a {
+a {
     color: #00bcd4;
     text-decoration: none;
-    transition: color 0.3s ease;
+    transition: color 0.2s ease;
 }
 
-#auth-container a:hover {
-    color: #0097a7;
-    text-decoration: underline;
+a:hover {
+    color: #00e5ff;
 }
 
-#auth-error {
-    color: #ff6347; /* Vermelho mais suave para erros */
-    margin-top: 10px;
-    font-weight: bold;
-}
-
-#game-container {
-    display: none;
-    max-width: 900px; /* Mais largo para o mapa e mais elementos */
-    padding: 25px;
-    display: flex; /* Usar flexbox para layout */
+#auth-container {
+    display: flex; /* Começa visível por padrão */
     flex-direction: column;
     align-items: center;
 }
 
-/* Estilos para o Item Equipado */
-#equipped-item-display {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 20px;
-    gap: 10px;
-    min-height: 40px; /* Para evitar saltos na UI */
+#game-container {
+    /* display: none; */ /* Será controlado via JS */
+    padding: 20px;
+    max-width: 900px;
 }
 
-#equipped-item-image {
-    width: 32px; /* Tamanho do ícone */
-    height: 32px;
-    object-fit: contain; /* Garante que a imagem se ajuste */
-    border: 1px solid #555;
-    border-radius: 4px;
-    background-color: rgba(0, 0, 0, 0.2);
-    padding: 2px;
-}
-
-#equipped-item-name {
-    font-size: 1.1em;
-    font-weight: bold;
-    color: #fff;
-    text-transform: capitalize;
-}
-
-
-/* Estilos para o Mapa */
 #game-map {
-    display: grid;
-    /* grid-template-columns definido via JS para flexibilidade */
-    border: 2px solid #555;
-    background-color: #333;
+    width: 600px; /* Tamanho do mapa */
+    height: 600px;
+    background-color: #4a4a4a; /* Cor de fundo do mapa */
+    border: 2px solid #00bcd4;
+    position: relative;
+    overflow: hidden; /* Garante que os players fiquem dentro do mapa */
     margin: 20px auto;
-    box-shadow: 0 0 15px rgba(0, 0, 0, 0.6);
-    overflow: hidden; /* Garante que o jogador não saia */
-    position: relative; /* Para posicionar o player */
 }
 
-.map-cell {
-    width: 32px; /* Tamanho de cada célula do mapa */
-    height: 32px;
-    border: 1px solid rgba(255, 255, 255, 0.05); /* Linhas de grade suaves */
+.player-cube {
+    width: 30px;
+    height: 30px;
+    background-color: #ff007f; /* Cor padrão do player */
+    position: absolute;
+    border: 2px solid #e0e0e0;
     box-sizing: border-box;
-    background-color: #4CAF50; /* Cor padrão da grama */
-    background-size: cover;
-    image-rendering: pixelated; /* Para imagens de tile art */
-}
-
-/* Player no Mapa */
-#player-cube {
-    width: 28px; /* Ligeiramente menor que a célula para dar margem */
-    height: 28px;
-    background-color: #ffcc00; /* Cor do jogador (amarelo ouro) */
-    border: 2px solid #fff;
-    border-radius: 4px;
-    position: absolute; /* Posicionado dentro do #game-map */
-    transition: left 0.1s linear, top 0.1s linear; /* Animação suave de movimento */
+    transition: left 0.1s linear, top 0.1s linear; /* Animação suave */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 0.8em;
+    font-weight: bold;
+    color: white;
+    text-shadow: 1px 1px 2px black;
     z-index: 10;
 }
 
+.player-health-bar {
+    position: absolute;
+    top: -10px; /* Posição acima do player */
+    left: 0;
+    width: 100%;
+    height: 5px;
+    background-color: #555;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.player-health-bar-fill {
+    height: 100%;
+    background-color: #28a745; /* Verde para vida cheia */
+    width: 100%; /* Largura inicial, será ajustada via JS */
+    transition: width 0.3s ease-in-out;
+}
+
+#player-cube {
+    background-color: #007bff; /* Cor do seu próprio player */
+    z-index: 11; /* Para garantir que seu player esteja acima dos outros */
+}
 
 #messages {
-    border: 1px solid #444;
-    background-color: #3a3a3a;
+    border: 1px solid #00bcd4;
     height: 200px;
-    overflow-y: auto;
+    overflow-y: scroll;
     padding: 10px;
-    margin-bottom: 15px;
-    border-radius: 8px;
+    background-color: #222;
+    margin-bottom: 10px;
     text-align: left;
-    width: 100%;
-    box-sizing: border-box;
-    font-size: 0.95em;
-    scrollbar-width: thin;
-    scrollbar-color: #555 #3a3a3a;
-}
-
-#messages::-webkit-scrollbar {
-    width: 8px;
-}
-#messages::-webkit-scrollbar-track {
-    background: #3a3a3a;
-    border-radius: 10px;
-}
-#messages::-webkit-scrollbar-thumb {
-    background-color: #555;
-    border-radius: 10px;
-    border: 2px solid #3a3a3a;
+    border-radius: 8px;
 }
 
 #messages p {
-    margin: 4px 0;
-    word-wrap: break-word;
-}
-
-#chat-input-container {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 20px;
-    width: 100%;
+    margin: 5px 0;
+    word-wrap: break-word; /* Quebra de linha para mensagens longas */
 }
 
 #messageInput {
-    flex-grow: 1;
-    margin-bottom: 0;
+    width: calc(100% - 90px); /* Ajuste para o botão Enviar */
+    display: inline-block;
+    vertical-align: middle;
 }
 
 #sendButton {
-    width: auto;
-    padding: 10px 18px;
-    font-size: 1em;
+    width: 80px;
+    display: inline-block;
+    vertical-align: middle;
+    margin-left: 5px;
 }
 
-/* Estilos de Inventário e Hotbar */
 #inventory-menu {
-    display: none;
-    position: fixed;
+    display: none; /* Inicia oculto */
+    position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
     background-color: #2a2a2a;
-    border: 2px solid #00bcd4; /* Borda destacada */
+    border: 2px solid #00bcd4;
     border-radius: 12px;
-    padding: 25px;
-    z-index: 1000;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.7);
+    padding: 20px;
+    z-index: 1000; /* Acima de outros elementos */
+    box-shadow: 0 0 25px rgba(0, 188, 212, 0.5);
     width: 90%;
-    max-width: 650px; /* Maior para o inventário */
-    box-sizing: border-box;
+    max-width: 600px;
+    text-align: center;
 }
 
 #inventory-grid {
     display: grid;
-    grid-template-columns: repeat(5, 1fr); /* 5 colunas para o inventário */
-    gap: 12px; /* Espaçamento maior */
-    margin-top: 20px;
-    margin-bottom: 25px;
-    padding: 15px;
-    border: 1px dashed #555;
-    border-radius: 8px;
-    background-color: #3a3a3a;
-}
-
-#hotbar {
-    display: flex;
-    gap: 8px; /* Espaçamento da hotbar */
+    grid-template-columns: repeat(5, 1fr); /* 5 colunas */
+    gap: 10px;
     margin-top: 20px;
     padding: 10px;
     border: 1px dashed #555;
@@ -293,10 +225,17 @@ button:active {
     color: #e0e0e0;
     position: relative; /* Para posicionar a quantidade */
     overflow: hidden; /* Esconder conteúdo fora do slot */
+    cursor: pointer; /* Indica que é clicável */
+    transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .inventory-slot.has-item {
     border-color: #00bcd4; /* Borda destacada quando tem item */
+}
+
+.inventory-slot.selected {
+    border-color: #ffcc00; /* Borda amarela quando selecionado */
+    background-color: #444;
 }
 
 .inventory-slot img {
@@ -309,28 +248,103 @@ button:active {
 .item-quantity {
     position: absolute;
     bottom: 2px;
-    right: 4px;
-    background-color: rgba(0, 0, 0, 0.6);
+    right: 2px;
+    background-color: rgba(0, 0, 0, 0.7);
     color: white;
     font-size: 0.7em;
     padding: 1px 4px;
-    border-radius: 3px;
-    min-width: 15px; /* Para números de 1 dígito */
-    text-align: center;
-}
-
-#hotbar .inventory-slot {
-    width: 50px;
-    height: 50px;
+    border-radius: 4px;
 }
 
 #closeInventoryButton {
     margin-top: 20px;
-    width: auto;
-    padding: 10px 20px;
-    background-color: #dc3545;
 }
 
-#closeInventoryButton:hover {
-    background-color: #c82333;
+#hotbar {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 20px;
+    padding: 10px;
+    background-color: #2a2a2a;
+    border-radius: 8px;
+    border: 1px solid #00bcd4;
+}
+
+.hotbar-slot {
+    width: 64px;
+    height: 64px;
+    background-color: #2c2c2c;
+    border: 2px solid #555;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9em;
+    color: #e0e0e0;
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.hotbar-slot.has-item {
+    border-color: #00bcd4;
+}
+
+.hotbar-slot.selected {
+    border-color: #ffcc00;
+    background-color: #444;
+    box-shadow: 0 0 15px rgba(255, 204, 0, 0.7);
+}
+
+.hotbar-slot img {
+    max-width: 80%;
+    max-height: 80%;
+    object-fit: contain;
+    image-rendering: pixelated;
+}
+
+.hotbar-slot .item-quantity {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    font-size: 0.7em;
+    padding: 1px 4px;
+    border-radius: 4px;
+}
+
+.hotbar-slot-number {
+    position: absolute;
+    top: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.7em;
+    color: #aaa;
+}
+
+#equipped-item-display {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    border: 1px solid #555;
+    padding: 5px;
+    border-radius: 8px;
+    background-color: #222;
+}
+
+#equipped-item-image {
+    width: 40px;
+    height: 40px;
+    margin-right: 10px;
+    object-fit: contain;
+    image-rendering: pixelated;
+}
+
+#equipped-item-name {
+    font-weight: bold;
+    color: #fff;
 }
